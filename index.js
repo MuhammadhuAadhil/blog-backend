@@ -4,11 +4,21 @@ const cors = require("cors");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
-const MONGODB_URI = process.env.MONGODB_URI || "mongodb://127.0.0.1:27017/blog";
+const IS_PRODUCTION = process.env.NODE_ENV === "production";
+const MONGODB_URI = process.env.MONGODB_URI || (IS_PRODUCTION ? "" : "mongodb://127.0.0.1:27017/blog");
 const ADMIN_UID = "NIOdBl7v8IVnYVTz0nAhTSPaExJ2";
 const MONGO_RETRY_DELAY_MS = 5000;
+const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN?.trim();
 
-app.use(cors());
+app.use(
+  cors(
+    CLIENT_ORIGIN
+      ? {
+          origin: CLIENT_ORIGIN,
+        }
+      : undefined
+  )
+);
 app.use(express.json());
 
 mongoose.connection.on("connected", () => {
@@ -129,9 +139,12 @@ app.get("/", (req, res) => {
 });
 
 app.get("/api/health", (req, res) => {
+  const hasMongoUri = Boolean(MONGODB_URI);
+
   res.json({
-    status: mongoose.connection.readyState === 1 ? "ok" : "degraded",
+    status: mongoose.connection.readyState === 1 && hasMongoUri ? "ok" : "degraded",
     database: mongoose.connection.readyState === 1 ? "connected" : "disconnected",
+    mongoConfigured: hasMongoUri,
   });
 });
 
@@ -252,6 +265,11 @@ app.delete("/api/blogs/:id", validateSignedInUser, async (req, res) => {
 });
 
 async function connectToMongoWithRetry() {
+  if (!MONGODB_URI) {
+    console.error("MongoDB connection skipped: MONGODB_URI is not configured.");
+    return;
+  }
+
   try {
     await mongoose.connect(MONGODB_URI);
     console.log("MongoDB connection established.");

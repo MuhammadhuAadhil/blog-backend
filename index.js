@@ -55,6 +55,10 @@ const blogSchema = new mongoose.Schema(
       default: 0,
       min: 0,
     },
+    likedByUserIds: {
+      type: [String],
+      default: [],
+    },
     likedByEmails: {
       type: [String],
       default: [],
@@ -213,9 +217,10 @@ app.patch("/api/blogs/like/:id", async (req, res) => {
       return res.status(400).json({ message: "Invalid blog id." });
     }
 
+    const authorId = req.body.authorId?.trim();
     const authorEmail = req.body.authorEmail?.trim().toLowerCase();
 
-    if (!authorEmail) {
+    if (!authorId || !authorEmail) {
       return res.status(401).json({ message: "Please sign in to like a blog." });
     }
 
@@ -225,13 +230,15 @@ app.patch("/api/blogs/like/:id", async (req, res) => {
       return res.status(404).json({ message: "Blog not found" });
     }
 
+    const likedByUserIds = Array.isArray(existingBlog.likedByUserIds) ? existingBlog.likedByUserIds : [];
     const likedByEmails = Array.isArray(existingBlog.likedByEmails) ? existingBlog.likedByEmails : [];
 
-    if (likedByEmails.includes(authorEmail)) {
-      return res.status(409).json({ message: "This email has already liked the blog." });
+    if (likedByUserIds.includes(authorId) || likedByEmails.includes(authorEmail)) {
+      return res.status(409).json({ message: "You have already liked this blog." });
     }
 
     existingBlog.likes += 1;
+    existingBlog.likedByUserIds = [...likedByUserIds, authorId];
     existingBlog.likedByEmails = [...likedByEmails, authorEmail];
     const updatedBlog = await existingBlog.save();
 

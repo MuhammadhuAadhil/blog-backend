@@ -154,6 +154,13 @@ function toBlogResponse(blog, userId = "", userEmail = "") {
   };
 }
 
+function normalizeLikeIdentity(req) {
+  return {
+    authorId: req.body.authorId?.trim() || "",
+    authorEmail: req.body.authorEmail?.trim().toLowerCase() || "",
+  };
+}
+
 app.get("/", (req, res) => {
   res.json({
     status: "ok",
@@ -238,8 +245,7 @@ app.patch("/api/blogs/like/:id", async (req, res) => {
       return res.status(400).json({ message: "Invalid blog id." });
     }
 
-    const authorId = req.body.authorId?.trim();
-    const authorEmail = req.body.authorEmail?.trim().toLowerCase();
+    const { authorId, authorEmail } = normalizeLikeIdentity(req);
 
     if (!authorId || !authorEmail) {
       return res.status(401).json({ message: "Please sign in to like a blog." });
@@ -293,6 +299,79 @@ app.patch("/api/blogs/like/:id", async (req, res) => {
     res.json({
       blog: toBlogResponse(updatedBlog, authorId, authorEmail),
       liked: true,
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+app.patch("/api/blogs/unlike/:id", async (req, res) => {
+  try {
+    if (!isValidObjectId(req.params.id)) {
+      return res.status(400).json({ message: "Invalid blog id." });
+    }
+
+    const { authorId, authorEmail } = normalizeLikeIdentity(req);
+
+    if (!authorId || !authorEmail) {
+      return res.status(401).json({ message: "Please sign in to unlike a blog." });
+    }
+
+    const existingBlog = await Blog.findById(req.params.id);
+
+    if (!existingBlog) {
+      return res.status(404).json({ message: "Blog not found" });
+    }
+
+    const likedByUserIds = Array.isArray(existingBlog.likedByUserIds) ? existingBlog.likedByUserIds : [];
+    const likedByEmails = Array.isArray(existingBlog.likedByEmails) ? existingBlog.likedByEmails : [];
+
+    if (!likedByUserIds.includes(authorId) && !likedByEmails.includes(authorEmail)) {
+      return res.status(409).json({
+        message: "You have not liked this blog yet.",
+        blog: toBlogResponse(existingBlog, authorId, authorEmail),
+        liked: false,
+      });
+    }
+
+    const updatedBlog = await Blog.findOneAndUpdate(
+      {
+        _id: req.params.id,
+        $or: [
+          { likedByUserIds: authorId },
+          { likedByEmails: authorEmail },
+        ],
+      },
+      {
+        $inc: { likes: -1 },
+        $pull: {
+          likedByUserIds: authorId,
+          likedByEmails: authorEmail,
+        },
+      },
+      {
+        new: true,
+      }
+    );
+
+    if (!updatedBlog) {
+      const currentBlog = await Blog.findById(req.params.id);
+
+      return res.status(409).json({
+        message: "You have not liked this blog yet.",
+        blog: currentBlog ? toBlogResponse(currentBlog, authorId, authorEmail) : null,
+        liked: false,
+      });
+    }
+
+    if (updatedBlog.likes < 0) {
+      updatedBlog.likes = 0;
+      await updatedBlog.save();
+    }
+
+    res.json({
+      blog: toBlogResponse(updatedBlog, authorId, authorEmail),
+      liked: false,
     });
   } catch (error) {
     res.status(500).json({ message: error.message });

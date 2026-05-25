@@ -161,6 +161,13 @@ function normalizeLikeIdentity(req) {
   };
 }
 
+function hasUserLikedBlog(blog, authorId, authorEmail) {
+  const likedByUserIds = Array.isArray(blog.likedByUserIds) ? blog.likedByUserIds : [];
+  const likedByEmails = Array.isArray(blog.likedByEmails) ? blog.likedByEmails : [];
+
+  return likedByUserIds.includes(authorId) || likedByEmails.includes(authorEmail);
+}
+
 app.get("/", (req, res) => {
   res.json({
     status: "ok",
@@ -257,48 +264,39 @@ app.patch("/api/blogs/like/:id", async (req, res) => {
       return res.status(404).json({ message: "Blog not found" });
     }
 
-    const likedByUserIds = Array.isArray(existingBlog.likedByUserIds) ? existingBlog.likedByUserIds : [];
-    const likedByEmails = Array.isArray(existingBlog.likedByEmails) ? existingBlog.likedByEmails : [];
+    const alreadyLiked = hasUserLikedBlog(existingBlog, authorId, authorEmail);
+    const update = alreadyLiked
+      ? {
+          $inc: { likes: -1 },
+          $pull: {
+            likedByUserIds: authorId,
+            likedByEmails: authorEmail,
+          },
+        }
+      : {
+          $inc: { likes: 1 },
+          $addToSet: {
+            likedByUserIds: authorId,
+            likedByEmails: authorEmail,
+          },
+        };
 
-    if (likedByUserIds.includes(authorId) || likedByEmails.includes(authorEmail)) {
-      return res.status(409).json({
-        message: "You have already liked this blog.",
-        blog: toBlogResponse(existingBlog, authorId, authorEmail),
-        liked: true,
-      });
-    }
-
-    const updatedBlog = await Blog.findOneAndUpdate(
-      {
-        _id: req.params.id,
-        likedByUserIds: { $ne: authorId },
-        likedByEmails: { $ne: authorEmail },
-      },
-      {
-        $inc: { likes: 1 },
-        $addToSet: {
-          likedByUserIds: authorId,
-          likedByEmails: authorEmail,
-        },
-      },
-      {
-        new: true,
-      }
-    );
+    const updatedBlog = await Blog.findByIdAndUpdate(req.params.id, update, {
+      new: true,
+    });
 
     if (!updatedBlog) {
-      const currentBlog = await Blog.findById(req.params.id);
+      return res.status(404).json({ message: "Blog not found" });
+    }
 
-      return res.status(409).json({
-        message: "You have already liked this blog.",
-        blog: currentBlog ? toBlogResponse(currentBlog, authorId, authorEmail) : null,
-        liked: true,
-      });
+    if (updatedBlog.likes < 0) {
+      updatedBlog.likes = 0;
+      await updatedBlog.save();
     }
 
     res.json({
       blog: toBlogResponse(updatedBlog, authorId, authorEmail),
-      liked: true,
+      liked: !alreadyLiked,
     });
   } catch (error) {
     res.status(500).json({ message: error.message });
